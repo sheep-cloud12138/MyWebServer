@@ -1,0 +1,32 @@
+[
+{
+  "directory": "/home/wjh/MyWebServer/build",
+  "command": "/usr/bin/g++  -I/home/wjh/MyWebServer/include  -pthread -Wall -O2 -g -std=gnu++14 -o CMakeFiles/server.dir/main.cpp.o -c /home/wjh/MyWebServer/main.cpp",
+  "file": "/home/wjh/MyWebServer/main.cpp"
+},
+{
+  "directory": "/home/wjh/MyWebServer/build",
+  "command": "/usr/bin/g++  -I/home/wjh/MyWebServer/include  -pthread -Wall -O2 -g -std=gnu++14 -o CMakeFiles/server.dir/src/sqlconnpool.cpp.o -c /home/wjh/MyWebServer/src/sqlconnpool.cpp",
+  "file": "/home/wjh/MyWebServer/src/sqlconnpool.cpp"
+},
+{
+  "directory": "/home/wjh/MyWebServer/build",
+  "command": "/usr/bin/g++  -I/home/wjh/MyWebServer/include  -pthread -Wall -O2 -g -std=gnu++14 -o CMakeFiles/server.dir/src/buffer.cpp.o -c /home/wjh/MyWebServer/src/buffer.cpp",
+  "file": "/home/wjh/MyWebServer/src/buffer.cpp"
+},
+{
+  "directory": "/home/wjh/MyWebServer/build",
+  "command": "/usr/bin/g++  -I/home/wjh/MyWebServer/include  -pthread -Wall -O2 -g -std=gnu++14 -o CMakeFiles/server.dir/src/epoller.cpp.o -c /home/wjh/MyWebServer/src/epoller.cpp",
+  "file": "/home/wjh/MyWebServer/src/epoller.cpp"
+},
+{
+  "directory": "/home/wjh/MyWebServer/build",
+  "command": "/usr/bin/g++  -I/home/wjh/MyWebServer/include  -pthread -Wall -O2 -g -std=gnu++14 -o CMakeFiles/server.dir/src/httpconn.cpp.o -c /home/wjh/MyWebServer/src/httpconn.cpp",
+  "file": "/home/wjh/MyWebServer/src/httpconn.cpp"
+},
+{
+  "directory": "/home/wjh/MyWebServer/build",
+  "command": "/usr/bin/g++  -I/home/wjh/MyWebServer/include  -pthread -Wall -O2 -g -std=gnu++14 -o CMakeFiles/server.dir/src/webserver.cpp.o -c /home/wjh/MyWebServer/src/webserver.cpp",
+  "file": "/home/wjh/MyWebServer/src/webserver.cpp"
+}
+]

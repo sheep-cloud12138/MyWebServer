@@ -1,0 +1,3 @@
+/home/wjh/MyWebServer/build/CMakeFiles/server.dir
+/home/wjh/MyWebServer/build/CMakeFiles/edit_cache.dir
+/home/wjh/MyWebServer/build/CMakeFiles/rebuild_cache.dir

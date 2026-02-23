@@ -1,0 +1,1 @@
+/usr/bin/g++  -pthread -Wall -O2 -g CMakeFiles/server.dir/main.cpp.o CMakeFiles/server.dir/src/sqlconnpool.cpp.o CMakeFiles/server.dir/src/buffer.cpp.o CMakeFiles/server.dir/src/epoller.cpp.o CMakeFiles/server.dir/src/httpconn.cpp.o CMakeFiles/server.dir/src/webserver.cpp.o -o server  -lmysqlclient 
