@@ -33,3 +33,9 @@ Thumbs.db
 
 # Dependencies (if any)
 .deps/
+.venv/
+.vscode/
+test_model.onnx
+test_model.onnx.data
+onnxruntime/
+onnxruntime-linux-x64-*.tgz
