@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI 预测</title>
+  <style>
+    body { font-family: sans-serif; max-width: 520px; margin: 40px auto; }
+    input, button { padding: 8px 10px; font-size: 16px; }
+    #result { margin-top: 14px; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h2>AI 预测（x + 100）</h2>
+  <input id="num" type="number" step="any" placeholder="输入数字，比如 50" />
+  <button id="btn">提交</button>
+  <div id="result">结果：-</div>
+
+  <script>
+    const numEl = document.getElementById('num');
+    const btnEl = document.getElementById('btn');
+    const resultEl = document.getElementById('result');
+
+    async function predict() {
+      const v = numEl.value.trim();
+      if (!v) {
+        resultEl.textContent = '结果：请输入数字';
+        return;
+      }
+      try {
+        const resp = await fetch('/api/predict', {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: v
+        });
+        const text = await resp.text();
+        resultEl.textContent = `结果：${text}`;
+      } catch (e) {
+        resultEl.textContent = `结果：请求失败 (${e.message})`;
+      }
+    }
+
+    btnEl.addEventListener('click', predict);
+    numEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') predict();
+    });
+  </script>
+</body>
+</html>

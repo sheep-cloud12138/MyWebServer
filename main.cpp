@@ -3,13 +3,6 @@
 #include <signal.h>
 #include <stdlib.h> // system
 #include "ai_engine.h" // 【新增】
-#include <iostream>
-#include <vector>
-
-
-#include "webserver.h"
-#include "ai_engine.h" // 【新增】
-#include <iostream>
 #include <vector>
 
 // 【新增】AI 引擎测试函数
@@ -47,14 +40,10 @@ void testAIEngine() {
 int main() {
         // 忽略 SIGPIPE 信号，防止客户端异常断开导致服务器崩溃 (面试防挂细节)
         signal(SIGPIPE, SIG_IGN); 
-        
-        // 创建网站的根目录和默认首页 (为了测试方便，在代码里动态生成)
-        if (system("mkdir -p /tmp/www")) {}
-        if (system("echo '<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>MyWebServer</title></head><body><h1>Hello Master!</h1><p>Welcome to your high-performance C++ Web Server.</p></body></html>' > /tmp/www/index.html")) {}
 
         // 配置参数：
         int port = 8080;
-        const char* srcDir = "/tmp/www"; // 刚生成的根目录
+    const char* srcDir = "/home/wjh/MyWebServer"; // 静态文件统一从项目目录读取
         
         // MySQL 连接参数 - 修改这里为你的实际配置
         const char* sqlUser = "wjh";      // 修改为你的 MySQL 用户名
@@ -68,10 +57,13 @@ int main() {
         std::cout << "Connecting to MySQL: user=" << sqlUser << ", db=" << dbName << std::endl;
 
         // 【新增】启动服务器前先加载 AI 模型
-        if (!AIEngine::Instance()->LoadModel("../test_model.onnx")) {
+        if (!AIEngine::Instance()->LoadModel("/home/wjh/MyWebServer/test_model.onnx")) {
             std::cerr << "[Error] Failed to load AI model!" << std::endl;
             return 1;
         }
+
+        // 自动打开前端页面（WSL 下使用 Windows cmd.exe 打开默认浏览器）
+        if (system("(sleep 1; cmd.exe /C start \"\" \"http://127.0.0.1:8080/predict.html\" >/dev/null 2>&1) &")) {}
 
         // 实例化服务器大管家并启动
         WebServer server(
