@@ -6,7 +6,7 @@ using namespace std;
 WebServer::WebServer(int port, const char *srcDir,
                      const char *sqlUser, const char *sqlPwd, const char *dbName,
                      int connPoolNum, int threadNum)
-    : port_(port), srcDir_(const_cast<char *>(srcDir)), isClose_(false),
+    : port_(port), isClose_(false), srcDir_(const_cast<char *>(srcDir)),
       epoller_(new Epoller()), threadpool_(new ThreadPool(threadNum))
 {
     // 1. 初始化数据库连接池

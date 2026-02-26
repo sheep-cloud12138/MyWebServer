@@ -8,6 +8,7 @@
 #include <unistd.h>  // close
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include "ai_engine.h" // 【新增】引入大脑
 
 using namespace std;
 
@@ -175,7 +176,40 @@ bool HttpConn::Process() {
         std::string body = requestData.substr(headerStart);
         ParseBody_(body);
     }
+    
+    // 🌟【新增】AI 智能接口拦截逻辑
+    // ==========================================================
+    if (method_ == "POST" && path_ == "/api/predict") {
+        // 1. 解析用户输入的数字 (这里假设 Body 里就是一个纯数字字符串)
+        float inputVal = 0.0f;
+        try {
+            inputVal = std::stof(body_); // string -> float
+        } catch (...) {
+            inputVal = 0.0f; // 解析失败给个默认值
+        }
 
+        // 2. 调用 AI 引擎进行推理
+        std::vector<float> inputVec = { inputVal };
+        std::vector<float> outputVec = AIEngine::Instance()->Predict(inputVec);
+        
+        // 3. 构造响应内容 (这里为了简单，直接返回计算结果的字符串)
+        std::string responseBody = "Result: " + std::to_string(outputVec.empty() ? 0.0f : outputVec[0]);
+
+        // 4. 组装 HTTP 响应报文
+        writeBuff_.Append("HTTP/1.1 200 OK\r\n");
+        writeBuff_.Append("Content-Type: text/plain\r\n");
+        writeBuff_.Append("Content-Length: " + std::to_string(responseBody.size()) + "\r\n");
+        writeBuff_.Append("Connection: keep-alive\r\n\r\n"); // 保持长连接
+        writeBuff_.Append(responseBody);
+
+        // 5. 设置 writev 的指针
+        iov_[0].iov_base = const_cast<char*>(writeBuff_.Peek());
+        iov_[0].iov_len = writeBuff_.ReadAbleBytes();
+        iovCnt_ = 1; // 只需要发送 writeBuff_ 里的数据，没有文件映射
+        
+        return true; // 处理完毕，直接返回，不走后面的静态文件逻辑
+    }
+    // ==========================================================
     // 3. 根据解析结果生成 HTTP 响应 (设置 iov_ 指向响应头和文件内容)
     MakeResponse_();
     return true;
@@ -212,6 +246,8 @@ void HttpConn::ParseHeader_(const std::string& line){
 // 解析请求体：如果是 POST 登录，这里会调用 SqlConnPool 查数据库
 void HttpConn::ParseBody_(const std::string& line)
 {
+    body_ = line; // 【修正】先保存请求体到成员变量
+
     // 假设这是一个登录请求，路径是 /login
     if(method_ == "POST" && path_ == "/login")
     {
