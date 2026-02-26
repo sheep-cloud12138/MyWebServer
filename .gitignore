@@ -39,3 +39,5 @@ test_model.onnx
 test_model.onnx.data
 onnxruntime/
 onnxruntime-linux-x64-*.tgz
+.env
+.env.*
