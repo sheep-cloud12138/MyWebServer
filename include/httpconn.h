@@ -48,6 +48,9 @@ private:
     char *file_;           // 指向 mmap 映射到内存中的文件首地址
     struct stat fileStat_; // 请求文件的状态信息 (大小、是否存在等)
 public:
+    // 安全限制
+    static const size_t MAX_REQUEST_BODY_SIZE = 1 << 20;  // 1MB 最大请求体
+    static const size_t MAX_REQUEST_HEADER_SIZE = 8192;   // 8KB 最大请求头
     HttpConn() ;
     ~HttpConn() ;
 

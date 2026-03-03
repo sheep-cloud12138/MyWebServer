@@ -1,4 +1,5 @@
 #include "webserver.h"
+#include "log.h"
 #include <iostream>
 #include <signal.h>
 #include <stdlib.h> // system
@@ -96,10 +97,23 @@ void testAIEngine() {
     }
 }
 
+// 全局标志位，用于优雅关闭
+volatile int g_shutdown = 0;
+void SignalHandler(int sig) { 
+    g_shutdown = 1;
+    LOG_INFO("Received signal %d, shutting down gracefully...", sig);
+}
+
 int main() {
         // 忽略 SIGPIPE 信号，防止客户端异常断开导致服务器崩溃 (面试防挂细节)
-        signal(SIGPIPE, SIG_IGN); 
+        signal(SIGPIPE, SIG_IGN);
+        // 优雅关闭处理
+        signal(SIGTERM, SignalHandler);
+        signal(SIGINT, SignalHandler);
     LoadDotEnvIfPresent();
+
+        // 初始化异步日志系统（后台线程写盘，队列容量 8192）
+        Log::Instance()->Init("./log", ".log", 8192, Log::INFO);
 
         // 配置参数：
     int port = atoi(GetEnvOrDefault("SERVER_PORT", "8080"));
@@ -113,13 +127,13 @@ int main() {
         int sqlPoolNum = 4;
         int threadNum = 8; // 八核动力
 
-        std::cout << "Starting WebServer on port " << port << "..." << std::endl;
-        std::cout << "Connecting to MySQL: user=" << sqlUser << ", db=" << dbName << std::endl;
+        LOG_INFO("Starting WebServer on port %d...", port);
+        LOG_INFO("Connecting to MySQL: user=%s, db=%s", sqlUser, dbName);
 
         // 【新增】启动服务器前先加载 AI 模型
         const char* modelPath = GetEnvOrDefault("MODEL_PATH", "/home/wjh/MyWebServer/test_model.onnx");
         if (!AIEngine::Instance()->LoadModel(modelPath)) {
-            std::cerr << "[Error] Failed to load AI model!" << std::endl;
+            LOG_ERROR("Failed to load AI model from %s!", modelPath);
             return 1;
         }
 

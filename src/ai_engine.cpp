@@ -1,4 +1,5 @@
 #include "ai_engine.h"
+#include "log.h"
 
 AIEngine::AIEngine() : memoryInfo_(Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault)) {
     // 初始化 ONNX Runtime 环境，设置日志级别为 WARNING
@@ -28,10 +29,10 @@ bool AIEngine::LoadModel(const std::string& modelPath) {
         inputNodeNames_ = {"input"};   // 必须与你 ONNX 模型的输入名一致
         outputNodeNames_ = {"output"}; // 必须与你 ONNX 模型的输出名一致
 
-        std::cout << "[AIEngine] Model loaded successfully from " << modelPath << std::endl;
+        LOG_INFO("[AIEngine] Model loaded successfully from %s", modelPath.c_str());
         return true;
     } catch (const Ort::Exception& e) {
-        std::cerr << "[AIEngine] Failed to load model: " << e.what() << std::endl;
+        LOG_ERROR("[AIEngine] Failed to load model: %s", e.what());
         return false;
     }
 }
@@ -39,7 +40,7 @@ bool AIEngine::LoadModel(const std::string& modelPath) {
 // 核心前向传播逻辑
 std::vector<float> AIEngine::Predict(const std::vector<float>& inputData) {
     if (!session_) {
-        std::cerr << "[AIEngine] Model not loaded!" << std::endl;
+        LOG_ERROR("[AIEngine] Model not loaded!");
         return {};
     }
 
@@ -71,7 +72,7 @@ std::vector<float> AIEngine::Predict(const std::vector<float>& inputData) {
         std::vector<float> result(floatArray, floatArray + outputCount);
         return result;
     } catch (const Ort::Exception& e) {
-        std::cerr << "[AIEngine] Inference error: " << e.what() << std::endl;
+        LOG_ERROR("[AIEngine] Inference error: %s", e.what());
         return {};
     }
 }

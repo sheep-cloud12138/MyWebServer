@@ -1,4 +1,5 @@
 #include "sqlconnpool.h"
+#include "log.h"
 
 using namespace std;
 
@@ -25,17 +26,16 @@ void SqlConnPool::Init(const char *host, int port,
     {
         MYSQL *sql = nullptr;
         sql = mysql_init(sql);
-        assert(sql);
         if (!sql)
         {
-            cerr << "MySQL Error: " << mysql_error(sql) << endl;
-            assert(false);
+            LOG_ERROR("MySQL init failed at connection %d", i);
+            return;
         }
         sql = mysql_real_connect(sql, host, user, pwd, dbName, port, nullptr, 0);
         if (!sql)
         {
-            cerr << "MySQL Error: " << mysql_error(sql) << endl;
-            assert(false);
+            LOG_ERROR("MySQL connect failed at connection %d", i);
+            return;
         }
         connQue_.push(sql);
     }

@@ -14,6 +14,10 @@
 #include "threadpool.h"
 #include "sqlconnpool.h"
 #include "httpconn.h"
+#include "heaptimer.h"
+
+// 全局优雅关闭标志（由信号处理函数设置）
+extern volatile int g_shutdown;
 
 class WebServer
 {
@@ -57,6 +61,9 @@ private:
     std::unique_ptr<Epoller> epoller_;         // IO多路复用
     std::unique_ptr<ThreadPool> threadpool_;   // 线程池
     std::unordered_map<int, HttpConn> users_;  // 保存所有客户端连接映射: fd -> HttpConn
+
+    int timeoutMS_;  // 默认超时时间 (比如 60000 毫秒)
+    std::unique_ptr<HeapTimer> timer_;
 
 };
 #endif // WEBSERVER_H

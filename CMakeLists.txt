@@ -23,8 +23,10 @@ set(SRC_FILES
     src/buffer.cpp
     src/epoller.cpp
     src/httpconn.cpp
+    src/heaptimer.cpp     # 【新增】定时器实现
     src/webserver.cpp
     src/ai_engine.cpp     # 【新增】别忘了把 AI 引擎的源文件加进去！
+    src/log.cpp           # 【新增】异步日志系统
 )
 
 # 生成可执行文件

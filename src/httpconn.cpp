@@ -1,4 +1,5 @@
 #include "httpconn.h"
+#include "log.h"
 #include <sys/mman.h>
 #include <iostream>
 #include <cstring>
@@ -54,8 +55,9 @@ void HttpConn::Close()
     // 关闭 Socket
     if (!isClose_)
     {
-        close(fd_);
         isClose_ = true;
+        close(fd_);
+        fd_ = -1;  // 标记已关闭，防止双重 close
         userCount_--;
     }
 }
@@ -246,6 +248,15 @@ void HttpConn::ParseHeader_(const std::string& line){
 // 解析请求体：如果是 POST 登录，这里会调用 SqlConnPool 查数据库
 void HttpConn::ParseBody_(const std::string& line)
 {
+    // 【新增】请求体大小检查（防止 OOM 攻击）
+    if(line.size() > MAX_REQUEST_BODY_SIZE) {
+        LOG_WARN("Request body too large: %zu bytes", line.size());
+        writeBuff_.Append("HTTP/1.1 413 Payload Too Large\r\n");
+        writeBuff_.Append("Content-Length: 0\r\n\r\n");
+        isClose_ = true;
+        return;
+    }
+    
     body_ = line; // 【修正】先保存请求体到成员变量
 
     // 假设这是一个登录请求，路径是 /login
@@ -258,7 +269,7 @@ void HttpConn::ParseBody_(const std::string& line)
 
         // （此处省略具体的 SQL 账号密码校验逻辑，为了保持代码精简）
         // 真实业务中，会解析 line (如 user=admin&pwd=123)，然后查库
-        std::cout << "  [DB] Executing Login check using pooled connection." << std::endl;
+        LOG_DEBUG("[DB] Executing Login check using pooled connection.");
     }
 }
 
