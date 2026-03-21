@@ -7,6 +7,9 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <queue>
+#include <condition_variable>
+#include <atomic>
 
 class AIEngine {
 public:
@@ -23,16 +26,20 @@ private:
     AIEngine();
     ~AIEngine();
 
-    // ONNX Runtime 环境与会话
+    // ONNX Runtime 环境与会话池
     std::unique_ptr<Ort::Env> env_;
-    std::unique_ptr<Ort::Session> session_;
+    std::vector<std::unique_ptr<Ort::Session>> sessions_;
+    std::queue<size_t> availableSessions_;
     Ort::MemoryInfo memoryInfo_;
 
     // 模型的输入输出节点信息
     std::vector<const char*> inputNodeNames_;
     std::vector<const char*> outputNodeNames_;
     
-    std::mutex mtx_; // 保证推理过程的线程安全
+    // 会话池同步原语：允许多请求并发推理，避免全局串行化
+    std::mutex poolMtx_;
+    std::condition_variable poolCv_;
+    std::atomic<size_t> sessionCount_;
 };
 
 #endif // AI_ENGINE_H

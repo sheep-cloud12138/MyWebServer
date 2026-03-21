@@ -21,25 +21,24 @@
 
 > 测试工具：[wrk](https://github.com/wg/wrk) | 测试时长：每组 10s
 
+> 最新回归时间：2026-03-21（串行压测，避免并发压测互相干扰）
+
 ### 静态文件服务 `GET /predict.html`
 
 | 并发模型 | QPS | 平均延迟 | 最大延迟 | 吞吐量 | 异常 |
 |----------|-----|----------|----------|--------|------|
-| 1 线程 / 10 连接 | **2,138** | 310µs | 1.40ms | 3.09 MB/s | 0 |
-| 4 线程 / 100 连接 | **1,933** | 568µs | 7.93ms | 2.80 MB/s | 1 timeout |
-| 4 线程 / 500 连接 | **4,019** | 5.57ms | 51.36ms | 5.81 MB/s | 0 |
-| 8 线程 / 1000 连接 | **2,823** | 20.98ms | 64.81ms | 4.08 MB/s | 169 connect |
+| 4 线程 / 500 连接 | **32,699** | 15.23ms | 20.19ms (P99) | 47.43 MB/s | 0 |
+| 8 线程 / 1000 连接 | **33,464** | 29.68ms | 36.50ms (P99) | 48.54 MB/s | 0 |
 
-> 峰值 QPS **4,019**（500 并发），1000 并发下 169 个 connect 错误来自系统 fd 软限制
+> 静态服务稳定在 **3.2万~3.4万 QPS**，1000 并发下保持零 socket error
 
 ### AI 推理接口 `POST /api/predict`
 
 | 并发模型 | QPS | 平均延迟 | 最大延迟 | 吞吐量 |
 |----------|-----|----------|----------|--------|
-| 1 线程 / 10 连接 | **1,904** | 366µs | 3.14ms | 198 KB/s |
-| 4 线程 / 100 连接 | **2,501** | 636µs | 6.32ms | 261 KB/s |
+| 4 线程 / 100 连接 | **32,276** | 2.69ms | 3.81ms (P99) | 3.29 MB/s |
 
-> 推理 QPS 达 **2,500**，ONNX Runtime C++ 推理单次延迟 < 1ms
+> 推理接口稳定在 **3.2万+ QPS**，socket error 为 0
 
 ## 1. 环境准备
 
@@ -54,7 +53,7 @@
 - SIGPIPE / SIGTERM / SIGINT 优雅处理（防崩溃）
 - 请求体大小限制（防 OOM 攻击，默认 1MB）
 - 并发连接数限制（防资源耗尽）
-- HTTP Keep-Alive 支持（防 Slowloris）
+- 连接超时回收（缓解慢连接占用）
 - 路径规范化检查（防路径遍历）
 
 ## 2. 安全配置（避免明文密码）
@@ -119,15 +118,15 @@ curl -X POST --data "50" http://127.0.0.1:8080/api/predict
 sudo apt-get install wrk
 
 # 静态文件压测 (GET)
-wrk -t4 -c500 -d10s http://127.0.0.1:8080/predict.html
+wrk -t4 -c500 -d10s --latency --timeout 10s http://127.0.0.1:8080/predict.html
 
 # AI 推理压测 (POST)
-wrk -t4 -c100 -d10s -s post.lua http://127.0.0.1:8080/api/predict
+wrk -t4 -c100 -d10s --latency --timeout 10s -s post.lua http://127.0.0.1:8080/api/predict
 
 # post.lua 内容：
 # wrk.method = "POST"
-# wrk.headers["Content-Type"] = "application/x-www-form-urlencoded"
-# wrk.body = "feature1=1.0&feature2=2.0&feature3=3.0&feature4=4.0"
+# wrk.headers["Content-Type"] = "text/plain"
+# wrk.body = "50"
 ```
 
 ## 6. 常用运维命令
@@ -191,7 +190,7 @@ pkill -f "MyWebServer/build/server"
 | **ThreadPool** | 异步任务执行 | 生产者-消费者，完美转发 |
 | **Buffer** | 数据缓冲 | readPos/writePos，readv |
 | **SqlConnPool** | DB 连接复用 | 单例+信号量+互斥，线程安全 |
-| **AIEngine** | ONNX 推理 | 单例，全局互斥保护（可优化） |
+| **AIEngine** | ONNX 推理 | 单例 + Session 池并发推理 |
 | **Log** | 异步日志 | 有界阻塞队列 + 后台写盘线程，四级日志 |
 
 ### 关键路径性能优化
@@ -199,11 +198,14 @@ pkill -f "MyWebServer/build/server"
 1. **零拷贝**：文件通过 mmap 映射，不进用户空间；writev 一次 syscall 完成响应头+文件
 2. **ET 模式**：减少 epoll_wait 通知次数；+ONESHOT 防并发竞态
 3. **定时器**：堆+hash 结构，O(log n) 调整；自动清除僵尸连接
-4. **线程池**：避免"一线程一连接"爆炸；完美转发减少拷贝5. **异步日志**：有界阻塞队列背压，后台单线程顺序写盘；日志 IO 完全不阻塞业务路径
+4. **线程池**：避免"一线程一连接"爆炸；完美转发减少拷贝
+5. **异步日志**：有界阻塞队列背压，后台单线程顺序写盘；日志 IO 完全不阻塞业务路径
+6. **推理并发化**：AIEngine 使用 Session 池并发推理，去除全局串行瓶颈
+7. **监听强化**：启用 SO_REUSEPORT，listen backlog 使用系统上限（当前 4096）
 ## 🎓 面试亮点速记
 
 **30秒版本**：
-> 这是一个高性能 WebServer，用 Epoll(ET) + 线程池 Reactor 架构，wrk 压测峰值 **4000+ QPS**（500 并发零错误）。核心亮点是零拷贝（mmap+writev）、线程安全堆定时器（mutex 保护）、异步日志（有界阻塞队列+后台写盘）、SIGTERM 优雅关闭。集成 ONNX Runtime，推理接口吞吐 **2500 QPS**。
+> 这是一个高性能 WebServer，用 Epoll(ET) + 线程池 Reactor 架构，wrk 压测静态接口稳定 **3.2万+ QPS**（500 并发），1000 并发仍保持 **3.3万+ QPS**。核心亮点是零拷贝（mmap+writev）、线程安全堆定时器（mutex 保护）、异步日志（有界阻塞队列+后台写盘）、SIGTERM 优雅关闭。集成 ONNX Runtime 并使用 Session 池并发推理，推理接口吞吐 **3.2万+ QPS**。
 
 **扩展版**：
-> 项目从网络编程（Epoll）、并发（线程池）、数据结构（堆定时器）、系统优化（零拷贝）、异步日志（有界队列+后台写盘）多个维度展示工程能力。特别是 ET 模式、ONESHOT、mmap+writev 等细节，体现了对性能的执着。安全方面补了 SIGPIPE/SIGTERM、请求体限制等生产级特性。经 wrk 压测验证，500 并发峰值 4000+ QPS，AI 推理 2500+ QPS，1000 并发无崩溃。
+> 项目从网络编程（Epoll）、并发（线程池）、数据结构（堆定时器）、系统优化（零拷贝）、异步日志（有界队列+后台写盘）多个维度展示工程能力。特别是 ET 模式、ONESHOT、mmap+writev 等细节，体现了对性能的执着。安全方面补了 SIGPIPE/SIGTERM、请求体限制、请求体严格校验、连接池失败回滚与幂等销毁等生产级特性。经 wrk 压测验证，静态接口 500 并发 3.2万+ QPS、1000 并发 3.3万+ QPS，AI 推理 3.2万+ QPS，均实现零 socket error。

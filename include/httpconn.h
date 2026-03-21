@@ -35,14 +35,16 @@ private:
     std::string path_;    // 请求路径，如 /index.html
     std::string version_; // 协议版本，如 HTTP/1.1
     std::string body_;    // POST 的请求体
+    size_t contentLength_;
 
     // 内部处理函数：解析 HTTP 请求 (简易状态机)
     bool ParseRequestLine_(const std::string &line); // 解析请求行
-    void ParseHeader_(const std::string &line);      // 解析请求头
-    void ParseBody_(const std::string &line);        // 解析请求体
+    bool ParseHeader_(const std::string &line);      // 解析请求头
+    bool ParseBody_(const std::string &line);        // 解析请求体
 
     // 内部处理函数：生成 HTTP 响应
     void MakeResponse_();
+    void ResetRequestState_();
 
     // 🌟 面试亮点：零拷贝之 mmap 内存映射
     char *file_;           // 指向 mmap 映射到内存中的文件首地址

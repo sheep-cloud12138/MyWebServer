@@ -21,7 +21,7 @@ public:
     static SqlConnPool *Instance(); // 单例模式，获取唯一实例
 
     //// 初始化：主机、端口、用户名、密码、库名、池大小
-    void Init(const char *host, int port,
+    bool Init(const char *host, int port,
               const char *user, const char *pwd,
               const char *dbName, int connSize = 10);
 
@@ -48,6 +48,9 @@ private:
     std::queue<MYSQL *> connQue_; // 连接池队列
     std::mutex mtx_;              // 互斥锁，保护连接池队列
     sem_t semId_;                 // 信号量，控制连接数量
+    bool isInitialized_;
+    bool semInitialized_;
+    bool poolDestroyed_;
 };
 
 /* RAII 机制封装类

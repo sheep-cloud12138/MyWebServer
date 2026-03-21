@@ -4,7 +4,8 @@
 #include <iostream>
 #include <cstring>
 #include <cassert>
-#include <regex>
+#include <cctype>
+#include <cerrno>
 #include <fcntl.h>   // open
 #include <unistd.h>  // close
 #include <sys/stat.h>
@@ -24,7 +25,18 @@ HttpConn::HttpConn()
     isClose_ = true;
     file_ = nullptr;
     iovCnt_ = 0;
+    contentLength_ = 0;
     memset(iov_, 0, sizeof(iov_));
+}
+
+void HttpConn::ResetRequestState_()
+{
+    isKeepAlive_ = false;
+    method_.clear();
+    path_.clear();
+    version_.clear();
+    body_.clear();
+    contentLength_ = 0;
 }
 
 // 初始化连接 (记录 fd 和 客户端 IP 地址)
@@ -39,7 +51,7 @@ void HttpConn::Init(int fd, const sockaddr_in &addr)
     isClose_ = false;
 
     // 初始化 HTTP 状态变量
-    isKeepAlive_ = false;
+    ResetRequestState_();
     file_ = nullptr;
     fileStat_ = {0};
 }
@@ -113,8 +125,6 @@ ssize_t HttpConn::Write(int *saveErrno)
         
         bytes_write += len; // 累加发送的字节数
 
-        if (iov_[0].iov_len + iov_[1].iov_len == 0) { break; } // 数据全发完了
-
         // 调整 iov_ 指针
         if (static_cast<size_t>(len) > iov_[0].iov_len)
         {
@@ -133,6 +143,16 @@ ssize_t HttpConn::Write(int *saveErrno)
             writeBuff_.Retrieve(len);
         }
 
+        if (ToWriteBytes() == 0)
+        {
+            if (file_)
+            {
+                munmap(file_, fileStat_.st_size);
+                file_ = nullptr;
+            }
+            break;
+        }
+
         if (!isET && ToWriteBytes() < 10240) break; // 退出条件
     }
     return bytes_write; // 返回总共发出的字节数
@@ -140,43 +160,108 @@ ssize_t HttpConn::Write(int *saveErrno)
 
 // 处理请求 (解析 HTTP 请求，生成响应)
 bool HttpConn::Process() {
-    // 1. 从 readBuff_ 中取出所有收到的数据
-    if(readBuff_.ReadAbleBytes() <= 0) {
+    if (readBuff_.ReadAbleBytes() <= 0) {
         return false;
     }
-    std::string requestData = readBuff_.RetrieveAllToStr();
 
-    // 2. 按行解析 (以 \r\n 为分隔符)
+    std::string requestData(readBuff_.Peek(), readBuff_.ReadAbleBytes());
+    if (requestData.size() > MAX_REQUEST_HEADER_SIZE + MAX_REQUEST_BODY_SIZE) {
+        writeBuff_.Append("HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\n\r\n");
+        iov_[0].iov_base = const_cast<char*>(writeBuff_.Peek());
+        iov_[0].iov_len = writeBuff_.ReadAbleBytes();
+        iovCnt_ = 1;
+        readBuff_.RetrieveAll();
+        return true;
+    }
+
+    const std::string headerEndMark = "\r\n\r\n";
+    size_t headerEnd = requestData.find(headerEndMark);
+    if (headerEnd == std::string::npos) {
+        return false;
+    }
+    if (headerEnd + headerEndMark.size() > MAX_REQUEST_HEADER_SIZE) {
+        writeBuff_.Append("HTTP/1.1 431 Request Header Fields Too Large\r\nContent-Length: 0\r\n\r\n");
+        iov_[0].iov_base = const_cast<char*>(writeBuff_.Peek());
+        iov_[0].iov_len = writeBuff_.ReadAbleBytes();
+        iovCnt_ = 1;
+        readBuff_.RetrieveAll();
+        return true;
+    }
+
+    ResetRequestState_();
+
+    // 1) 解析请求行
     size_t lineEnd = requestData.find("\r\n");
-    if(lineEnd == std::string::npos) {
-        return false; // 请求行不完整
+    if (lineEnd == std::string::npos || lineEnd > headerEnd) {
+        return false;
     }
-
-    // 2.1 解析请求行 (如: GET /index.html HTTP/1.1)
     std::string requestLine = requestData.substr(0, lineEnd);
-    if(!ParseRequestLine_(requestLine)) {
-        return false; // 请求行解析失败 
+    if (!ParseRequestLine_(requestLine)) {
+        return false;
     }
 
-    // 2.2 解析请求头 (循环查找 \r\n)
-    size_t headerStart = lineEnd + 2; // 跳过 \r\n
-    // 【修正：增加括号，保证先赋值再比较】
-    while((lineEnd = requestData.find("\r\n", headerStart)) != std::string::npos) {
-        std::string headerLine = requestData.substr(headerStart, lineEnd - headerStart);
-        if(headerLine.empty()) {
-            // 遇到空行，说明请求头结束了，后面紧跟着的是 Body
-            headerStart = lineEnd + 2; 
-            break;
+    // 2) 解析请求头
+    size_t headerStart = lineEnd + 2;
+    while (headerStart < headerEnd) {
+        size_t curLineEnd = requestData.find("\r\n", headerStart);
+        if (curLineEnd == std::string::npos || curLineEnd > headerEnd) {
+            return false;
         }
-        ParseHeader_(headerLine);
-        headerStart = lineEnd + 2; // 继续查找下一行
+        std::string headerLine = requestData.substr(headerStart, curLineEnd - headerStart);
+        if (!ParseHeader_(headerLine)) {
+            writeBuff_.Append("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            iov_[0].iov_base = const_cast<char*>(writeBuff_.Peek());
+            iov_[0].iov_len = writeBuff_.ReadAbleBytes();
+            iovCnt_ = 1;
+            isKeepAlive_ = false;
+            readBuff_.RetrieveAll();
+            return true;
+        }
+        headerStart = curLineEnd + 2;
     }
 
-    // 2.3 解析请求体 (比如 POST 提交的表单数据)
-    // 注意：这段代码必须在 while 循环的外面！
-    if(headerStart < requestData.size()) {
-        std::string body = requestData.substr(headerStart);
-        ParseBody_(body);
+    // 3) 请求体按 Content-Length 读取，支持半包/粘包
+    size_t bodyStart = headerEnd + headerEndMark.size();
+    if (contentLength_ > MAX_REQUEST_BODY_SIZE) {
+        writeBuff_.Append("HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\n\r\n");
+        iov_[0].iov_base = const_cast<char*>(writeBuff_.Peek());
+        iov_[0].iov_len = writeBuff_.ReadAbleBytes();
+        iovCnt_ = 1;
+        isKeepAlive_ = false;
+        readBuff_.RetrieveAll();
+        return true;
+    }
+    if (contentLength_ > (static_cast<size_t>(-1) - bodyStart)) {
+        writeBuff_.Append("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        iov_[0].iov_base = const_cast<char*>(writeBuff_.Peek());
+        iov_[0].iov_len = writeBuff_.ReadAbleBytes();
+        iovCnt_ = 1;
+        isKeepAlive_ = false;
+        readBuff_.RetrieveAll();
+        return true;
+    }
+    size_t totalNeed = bodyStart + contentLength_;
+    if (requestData.size() < totalNeed) {
+        return false;
+    }
+    if (contentLength_ > 0) {
+        if (!ParseBody_(requestData.substr(bodyStart, contentLength_))) {
+            iov_[0].iov_base = const_cast<char*>(writeBuff_.Peek());
+            iov_[0].iov_len = writeBuff_.ReadAbleBytes();
+            iovCnt_ = 1;
+            isKeepAlive_ = false;
+            readBuff_.Retrieve(totalNeed);
+            return true;
+        }
+    }
+
+    // 消费当前请求，剩余数据留给下一次处理（支持 keep-alive 连续请求）
+    readBuff_.Retrieve(totalNeed);
+
+    writeBuff_.RetrieveAll();
+    if (file_) {
+        munmap(file_, fileStat_.st_size);
+        file_ = nullptr;
     }
     
     // 🌟【新增】AI 智能接口拦截逻辑
@@ -184,10 +269,20 @@ bool HttpConn::Process() {
     if (method_ == "POST" && path_ == "/api/predict") {
         // 1. 解析用户输入的数字 (这里假设 Body 里就是一个纯数字字符串)
         float inputVal = 0.0f;
-        try {
-            inputVal = std::stof(body_); // string -> float
-        } catch (...) {
-            inputVal = 0.0f; // 解析失败给个默认值
+        const char* begin = body_.c_str();
+        char* end = nullptr;
+        inputVal = std::strtof(begin, &end);
+        while (end && *end && std::isspace(static_cast<unsigned char>(*end))) {
+            ++end;
+        }
+        if (end == begin || (end && *end != '\0')) {
+            std::string badReq = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n";
+            badReq += isKeepAlive_ ? "Connection: keep-alive\r\n\r\n" : "Connection: close\r\n\r\n";
+            writeBuff_.Append(badReq);
+            iov_[0].iov_base = const_cast<char*>(writeBuff_.Peek());
+            iov_[0].iov_len = writeBuff_.ReadAbleBytes();
+            iovCnt_ = 1;
+            return true;
         }
 
         // 2. 调用 AI 引擎进行推理
@@ -201,7 +296,11 @@ bool HttpConn::Process() {
         writeBuff_.Append("HTTP/1.1 200 OK\r\n");
         writeBuff_.Append("Content-Type: text/plain\r\n");
         writeBuff_.Append("Content-Length: " + std::to_string(responseBody.size()) + "\r\n");
-        writeBuff_.Append("Connection: keep-alive\r\n\r\n"); // 保持长连接
+        if (isKeepAlive_) {
+            writeBuff_.Append("Connection: keep-alive\r\n\r\n");
+        } else {
+            writeBuff_.Append("Connection: close\r\n\r\n");
+        }
         writeBuff_.Append(responseBody);
 
         // 5. 设置 writev 的指针
@@ -216,45 +315,83 @@ bool HttpConn::Process() {
     MakeResponse_();
     return true;
 }
-// 解析请求行：使用正则表达式提取 Method, Path, Version
 bool HttpConn::ParseRequestLine_(const std::string& line){
-    std::regex patten("^([^ ]*) ([^ ]*) HTTP/([^ ]*)$");
-    std::smatch subMatch;
-    if(std::regex_match(line, subMatch, patten)) {
-        method_ = subMatch[1];
-        path_ = subMatch[2];
-        version_ = subMatch[3];
-        if(path_ == "/") {
-            path_ = "/index.html";
-        }
-        return true;
+    size_t firstSpace = line.find(' ');
+    if (firstSpace == std::string::npos) {
+        return false;
     }
-    return false;
+    size_t secondSpace = line.find(' ', firstSpace + 1);
+    if (secondSpace == std::string::npos) {
+        return false;
+    }
+
+    method_ = line.substr(0, firstSpace);
+    path_ = line.substr(firstSpace + 1, secondSpace - firstSpace - 1);
+    const std::string prefix = "HTTP/";
+    if (line.compare(secondSpace + 1, prefix.size(), prefix) != 0) {
+        return false;
+    }
+    version_ = line.substr(secondSpace + 1 + prefix.size());
+    isKeepAlive_ = (version_ == "1.1");
+    if (path_ == "/") {
+        path_ = "/index.html";
+    }
+    return !method_.empty() && !path_.empty() && !version_.empty();
 }
 
-// 解析请求头：重点关注 Connection 字段，判断是否是长连接
-void HttpConn::ParseHeader_(const std::string& line){
-    std::regex patten("^([^:]*): ?(.*)$");
-    std::smatch subMatch;
-    if(std::regex_match(line, subMatch, patten)) {
-        std::string headerName = subMatch[1];
-        std::string headerValue = subMatch[2];
-        if(headerName == "Connection" && headerValue == "keep-alive") {
+bool HttpConn::ParseHeader_(const std::string& line){
+    size_t colonPos = line.find(':');
+    if (colonPos == std::string::npos) {
+        return true;
+    }
+    std::string headerName = line.substr(0, colonPos);
+    size_t valueStart = colonPos + 1;
+    while (valueStart < line.size() && std::isspace(static_cast<unsigned char>(line[valueStart]))) {
+        ++valueStart;
+    }
+    std::string headerValue = line.substr(valueStart);
+    std::string headerNameLower = headerName;
+    std::string headerValueLower = headerValue;
+    for (char& ch : headerNameLower) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    for (char& ch : headerValueLower) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+
+    if (headerNameLower == "connection") {
+        if (headerValueLower == "close") {
+            isKeepAlive_ = false;
+        } else if (headerValueLower == "keep-alive") {
             isKeepAlive_ = true;
         }
+    } else if (headerNameLower == "content-length") {
+        if (headerValueLower.empty()) {
+            return false;
+        }
+        for (char ch : headerValueLower) {
+            if (!std::isdigit(static_cast<unsigned char>(ch))) {
+                return false;
+            }
+        }
+        errno = 0;
+        unsigned long long parsed = std::strtoull(headerValueLower.c_str(), nullptr, 10);
+        if (errno == ERANGE) {
+            return false;
+        }
+        if (parsed > static_cast<unsigned long long>(MAX_REQUEST_BODY_SIZE)) {
+            contentLength_ = MAX_REQUEST_BODY_SIZE + 1;
+            return true;
+        }
+        contentLength_ = static_cast<size_t>(parsed);
     }
-        
+    return true;
 }
 // 解析请求体：如果是 POST 登录，这里会调用 SqlConnPool 查数据库
-void HttpConn::ParseBody_(const std::string& line)
+bool HttpConn::ParseBody_(const std::string& line)
 {
     // 【新增】请求体大小检查（防止 OOM 攻击）
     if(line.size() > MAX_REQUEST_BODY_SIZE) {
         LOG_WARN("Request body too large: %zu bytes", line.size());
         writeBuff_.Append("HTTP/1.1 413 Payload Too Large\r\n");
-        writeBuff_.Append("Content-Length: 0\r\n\r\n");
-        isClose_ = true;
-        return;
+        writeBuff_.Append("Content-Length: 0\r\nConnection: close\r\n\r\n");
+        return false;
     }
     
     body_ = line; // 【修正】先保存请求体到成员变量
@@ -271,6 +408,7 @@ void HttpConn::ParseBody_(const std::string& line)
         // 真实业务中，会解析 line (如 user=admin&pwd=123)，然后查库
         LOG_DEBUG("[DB] Executing Login check using pooled connection.");
     }
+    return true;
 }
 
 // 阶段三：生成 HTTP 响应 (零拷贝核心)

@@ -3,7 +3,6 @@
 
 #include <vector>
 #include <string>
-#include <atomic>
 #include <iostream>
 #include <unistd.h>  // 包含 read, write 系统调用
 #include <sys/uio.h> // 包含 readv (这是面试亮点)
@@ -21,8 +20,8 @@ private:
 
     // 成员变量
     vector<char> buffer_;// 用于存储数据的缓冲区
-    atomic<size_t> readPos_;// 读指针，表示下一个可读字节的位置
-    atomic<size_t> writePos_;// 写指针，表示下一个可写字节的位置
+    size_t readPos_;// 读指针，表示下一个可读字节的位置
+    size_t writePos_;// 写指针，表示下一个可写字节的位置
    
 public:
 

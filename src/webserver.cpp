@@ -1,6 +1,7 @@
 #include "webserver.h"
 #include "log.h"
 #include <iostream>
+#include <climits>
 using namespace std;
 
 // 构造函数：装配所有零件
@@ -12,7 +13,10 @@ WebServer::WebServer(int port, const char *srcDir,
       timeoutMS_(60000), timer_(new HeapTimer())
 {
     // 1. 初始化数据库连接池
-    SqlConnPool::Instance()->Init("localhost", 3306, sqlUser, sqlPwd, dbName, connPoolNum);
+    if (!SqlConnPool::Instance()->Init("localhost", 3306, sqlUser, sqlPwd, dbName, connPoolNum))
+    {
+        LOG_WARN("Init sql connection pool failed. Running without DB-backed features.");
+    }
 
     // 2. 初始化 HttpConn 的全局静态变量
     HttpConn::srcDir_ = srcDir_;
@@ -98,6 +102,7 @@ bool WebServer::InitSocket_()
     // 2. 设置 Socket 选项：端口复用
     int optval = 1;
     setsockopt(listenFd_, SOL_SOCKET, SO_REUSEADDR, (const void *)&optval, sizeof(int));
+    setsockopt(listenFd_, SOL_SOCKET, SO_REUSEPORT, (const void *)&optval, sizeof(int));
 
     // 绑定端口
     struct sockaddr_in addr;
@@ -109,8 +114,13 @@ bool WebServer::InitSocket_()
         return false;
     }
 
-    // 监听（backlog 设为 1024，支撑高并发）
-    if (listen(listenFd_, 1024) < 0)
+    // 使用系统允许的最大 backlog，减少高并发建连丢失。
+    int backlog = SOMAXCONN;
+    if (backlog <= 0 || backlog > INT_MAX)
+    {
+        backlog = 4096;
+    }
+    if (listen(listenFd_, backlog) < 0)
     {
         return false;
     }
@@ -217,6 +227,8 @@ void WebServer::OnWrite_(HttpConn *client)
             OnProcess_(client);
             return;
         }
+        CloseConn_(client);
+        return;
     }
     else if (ret < 0 && writeErrno == EAGAIN)
     {
@@ -224,7 +236,10 @@ void WebServer::OnWrite_(HttpConn *client)
         epoller_->ModFd(client->GetFd(), connEvent_ | EPOLLOUT);
         return;
     }
-    CloseConn_(client); // 其他情况或者短连接，直接关闭
+    if (ret < 0)
+    {
+        CloseConn_(client);
+    }
 }
 void WebServer::OnProcess_(HttpConn *client)
 {
